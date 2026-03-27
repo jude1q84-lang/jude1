@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>馬場バイアス</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 判定色スタイル */
+        .status-red { background-color: #fee2e2; color: #dc2626; font-weight: bold; border-color: #dc2626 !important; }
+        .status-blue { background-color: #dbeafe; color: #2563eb; font-weight: bold; border-color: #2563eb !important; }
+        .status-yellow { background-color: #fef9c3; color: #ca8a04; font-weight: bold; border-color: #ca8a04 !important; }
+        
+        /* デフォルトスタイル（紫色の枠や背景は廃止） */
+        .status-default { background-color: white; color: #374151; border-color: #d1d5db; }
+
+        /* スマートフォン向けスタイル調整 */
+        select {
+            appearance: none;
+            -webkit-appearance: none;
+            text-align: center;
+            /* iPhoneでズームしないギリギリのサイズ。二桁表示のため少し小さく */
+            font-size: 13px !important;
+            /* 左右のパディングを詰めて二桁数字のスペースを確保 */
+            padding-left: 2px !important;
+            padding-right: 2px !important;
+            border-width: 1.5px; /* ボーダーを少し太くして見やすく */
+            border-style: solid;
+        }
+
+        option {
+            font-size: 16px; /* プルダウンを開いたときは見やすく */
+        }
+
+        /* 選択不可な選択肢のスタイル */
+        option:disabled {
+            color: #d1d5db;
+            background-color: #f3f4f6;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-2">
+    <div class="max-w-full mx-auto bg-white rounded-lg shadow p-3">
+        <h1 class="text-xl font-bold text-center mb-3">馬場バイアス判定ツール</h1>
+        
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-sm">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="p-1 border w-24 text-xs">場所・コース</th>
+                        <th class="p-1 border w-12 text-xs">R数</th>
+                        <th class="p-1 border text-xs">内枠</th>
+                        <th class="p-1 border text-xs">外枠</th>
+                        <th class="p-1 border text-xs">逃先</th>
+                        <th class="p-1 border text-xs">差追</th>
+                    </tr>
+                </thead>
+                <tbody id="bias-table-body">
+                    </tbody>
+            </table>
+        </div>
+
+        <div class="mt-4 text-center">
+            <button onclick="resetNumbersOnly()" class="w-full py-3 bg-indigo-600 text-white rounded-lg font-bold shadow-md active:bg-indigo-800 text-lg">数字をリセット</button>
+        </div>
+
+        <div class="mt-4 p-3 bg-gray-50 rounded border text-[11px] text-gray-600 leading-relaxed">
+            <span class="font-bold">判定：</span><span class="text-red-600 font-bold">赤(超抜)</span> / <span class="text-blue-600 font-bold">青(有利)</span> / <span class="text-yellow-600 font-bold">黄(微有利)</span><br>
+            ※対項目の差が1以下の場合は色は付きません。<br>
+            ※対項目が両方色付きの場合はフラット（色なし）と判定します。
+        </div>
+    </div>
+
+    <script>
+        const centralVenues = ["札幌", "函館", "福島", "新潟", "東京", "中山", "中京", "京都", "阪神", "小倉"];
+        const localVenues = ["大井", "川崎", "船橋", "浦和", "名古屋"];
+        const courses = ["芝", "ダート"];
+        const rowsCount = 6;
+
+        function initTable() {
+            const tbody = document.getElementById('bias-table-body');
+            for (let i = 0; i < rowsCount; i++) {
+                const tr = document.createElement('tr');
+                
+                let courseOptions = '<option value="">未選択</option>';
+                centralVenues.forEach(v => {
+                    courses.forEach(c => {
+                        courseOptions += `<option value="${v}${c}">${v}${c}</option>`;
+                    });
+                });
+                localVenues.forEach(v => {
+                    courseOptions += `<option value="${v}">${v}</option>`;
+                });
+
+                let raceOptions = '<option value="0">0</option>';
+                for(let n=1; n<=12; n++) raceOptions += `<option value="${n}">${n}</option>`;
+
+                tr.innerHTML = `
+                    <td class="p-1 border"><select id="course-${i}" class="w-full p-1 border rounded status-default text-[10px] md:text-sm" style="text-align-last: center;">${courseOptions}</select></td>
+                    <td class="p-1 border"><select id="race-${i}" onchange="updateOptions(${i}); calculate(${i});" class="w-full p-1 border rounded font-bold status-default">${raceOptions}</select></td>
+                    <td class="p-1 border">${createCountSelect(i, 'inner')}</td>
+                    <td class="p-1 border">${createCountSelect(i, 'outer')}</td>
+                    <td class="p-1 border">${createCountSelect(i, 'front')}</td>
+                    <td class="p-1 border">${createCountSelect(i, 'back')}</td>
+                `;
+                tbody.appendChild(tr);
+            }
+        }
+
+        function createCountSelect(rowIdx, type) {
+            let options = '';
+            // 最大36まで
+            for(let n=0; n<=36; n++) options += `<option value="${n}">${n}</option>`;
+            return `<select id="${type}-${rowIdx}" onfocus="updateOptions(${rowIdx})" onchange="calculate(${rowIdx})" class="w-full p-1 rounded status-default text-center">${options}</select>`;
+        }
+
+        // 現在の数値未満を選択不可にする機能（レース数・各数値）
+        function updateOptions(rowIdx) {
+            const raceEl = document.getElementById(`race-${rowIdx}`);
+            const currentRace = parseInt(raceEl.value);
+            
+            // レース数自体のオプション制御
+            Array.from(raceEl.options).forEach(opt => {
+                const val = parseInt(opt.value);
+                opt.disabled = (val !== 0 && val < currentRace);
+            });
+
+            const types = ['inner', 'outer', 'front', 'back'];
+            types.forEach(type => {
+                const el = document.getElementById(`${type}-${rowIdx}`);
+                const currentVal = parseInt(el.value);
+                Array.from(el.options).forEach(opt => {
+                    const val = parseInt(opt.value);
+                    // 現在入っている数字より小さい数字（0以外）は選択不可にする
+                    opt.disabled = (val !== 0 && val < currentVal);
+                });
+            });
+        }
+
+        function determineColorClass(type, raceCount, score, diff) {
+            if (raceCount === 0 || diff <= 1) return 'status-default';
+
+            if (type === 'inner' || type === 'outer') {
+                const thresholds = raceCount <= 4 ? [100, 90, 80] : [95, 85, 75];
+                if (score >= thresholds[0]) return 'status-red';
+                if (score >= thresholds[1]) return 'status-blue';
+                if (score >= thresholds[2]) return 'status-yellow';
+            } else { // front, back
+                const thresholds = raceCount <= 4 ? [120, 110, 100] : [110, 100, 90];
+                if (score >= thresholds[0]) return 'status-red';
+                if (score >= thresholds[1]) return 'status-blue';
+                if (score >= thresholds[2]) return 'status-yellow';
+            }
+            return 'status-default';
+        }
+
+        function calculate(rowIdx) {
+            const raceCount = parseInt(document.getElementById(`race-${rowIdx}`).value);
+            
+            const vals = {
+                inner: parseInt(document.getElementById(`inner-${rowIdx}`).value),
+                outer: parseInt(document.getElementById(`outer-${rowIdx}`).value),
+                front: parseInt(document.getElementById(`front-${rowIdx}`).value),
+                back: parseInt(document.getElementById(`back-${rowIdx}`).value)
+            };
+
+            const diffs = {
+                frame: Math.abs(vals.inner - vals.outer),
+                leg: Math.abs(vals.front - vals.back)
+            };
+
+            const types = ['inner', 'outer', 'front', 'back'];
+            
+            // 一旦、全項目の色を判定して格納
+            let currentColors = {
+                inner: determineColorClass('inner', raceCount, (vals.inner / (raceCount * 2)) * 100, diffs.frame),
+                outer: determineColorClass('outer', raceCount, (vals.outer / (raceCount * 2)) * 100, diffs.frame),
+                front: determineColorClass('front', raceCount, (vals.front / (raceCount * 2)) * 100, diffs.leg),
+                back: determineColorClass('back', raceCount, (vals.back / (raceCount * 2)) * 100, diffs.leg)
+            };
+
+            // フラット判定（両方色付きの場合は色を消す）
+            if (currentColors.inner !== 'status-default' && currentColors.outer !== 'status-default') {
+                currentColors.inner = 'status-default';
+                currentColors.outer = 'status-default';
+            }
+            if (currentColors.front !== 'status-default' && currentColors.back !== 'status-default') {
+                currentColors.front = 'status-default';
+                currentColors.back = 'status-default';
+            }
+
+            // 最終的な色を適用
+            types.forEach(type => {
+                const element = document.getElementById(`${type}-${rowIdx}`);
+                // クラスを一度完全にリセットしてから適用
+                element.className = `w-full p-1 rounded text-center status-default ${currentColors[type]}`;
+            });
+        }
+
+        function resetNumbersOnly() {
+            for (let i = 0; i < rowsCount; i++) {
+                const raceEl = document.getElementById(`race-${i}`);
+                raceEl.value = "0";
+                Array.from(raceEl.options).forEach(opt => opt.disabled = false);
+
+                const types = ['inner', 'outer', 'front', 'back'];
+                types.forEach(type => {
+                    const el = document.getElementById(`${type}-${i}`);
+                    el.value = "0";
+                    el.className = "w-full p-1 rounded text-center status-default";
+                    Array.from(el.options).forEach(opt => opt.disabled = false);
+                });
+            }
+        }
+
+        window.onload = initTable;
+    </script>
+</body>
+</html>
